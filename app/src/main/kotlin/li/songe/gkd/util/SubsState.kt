@@ -1,6 +1,9 @@
 package li.songe.gkd.util
 
 import com.blankj.utilcode.util.LogUtils
+import io.ktor.client.call.body
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
@@ -23,6 +26,7 @@ import li.songe.gkd.data.CategoryConfig
 import li.songe.gkd.data.GlobalRule
 import li.songe.gkd.data.RawSubscription
 import li.songe.gkd.data.SubsConfig
+import li.songe.gkd.data.SubsVersion
 import li.songe.gkd.db.DbSet
 
 val subsItemsFlow by lazy {
@@ -60,16 +64,14 @@ fun deleteSubscription(subsId: Long) {
 }
 
 fun getGroupRawEnable(
-    rawGroup: RawSubscription.RawGroupProps,
-    subsConfigs: List<SubsConfig>,
+    group: RawSubscription.RawGroupProps,
+    subsConfig: SubsConfig?,
     category: RawSubscription.RawCategory?,
-    categoryConfigs: List<CategoryConfig>
+    categoryConfig: CategoryConfig?,
 ): Boolean {
     // 优先级: 规则用户配置 > 批量配置 > 批量默认 > 规则默认
-    val groupConfig = subsConfigs.find { c -> c.groupKey == rawGroup.key }
     // 1.规则用户配置
-    return groupConfig?.enable ?: if (category != null) {// 这个规则被批量配置捕获
-        val categoryConfig = categoryConfigs.find { c -> c.categoryKey == category.key }
+    return subsConfig?.enable ?: if (category != null) {// 这个规则被批量配置捕获
         val enable = if (categoryConfig != null) {
             // 2.批量配置
             categoryConfig.enable
@@ -80,15 +82,15 @@ fun getGroupRawEnable(
         enable
     } else {
         null
-    } ?: rawGroup.enable ?: true
+    } ?: group.enable ?: true
 }
 
 data class RuleSummary(
     val globalRules: ImmutableList<GlobalRule> = persistentListOf(),
-    val globalGroups: ImmutableList<RawSubscription.RawGlobalGroup> = persistentListOf(),
+    val globalGroups: ImmutableList<ResolvedGlobalGroup> = persistentListOf(),
     val appIdToRules: ImmutableMap<String, ImmutableList<AppRule>> = persistentMapOf(),
     val appIdToGroups: ImmutableMap<String, ImmutableList<RawSubscription.RawAppGroup>> = persistentMapOf(),
-    val appIdToAllGroups: ImmutableMap<String, ImmutableList<Pair<RawSubscription.RawAppGroup, Boolean>>> = persistentMapOf(),
+    val appIdToAllGroups: ImmutableMap<String, ImmutableList<ResolvedAppGroup>> = persistentMapOf(),
 ) {
     private val appSize = appIdToRules.keys.size
     private val appGroupSize = appIdToGroups.values.sumOf { s -> s.size }
@@ -112,7 +114,8 @@ data class RuleSummary(
     }
 
     val slowGlobalGroups =
-        globalRules.filter { r -> r.isSlow }.distinctBy { r -> r.group }.map { r -> r.group to r }
+        globalRules.filter { r -> r.isSlow }.distinctBy { r -> r.group }
+            .map { r -> r.group to r }
     val slowAppGroups =
         appIdToRules.values.flatten().filter { r -> r.isSlow }.distinctBy { r -> r.group }
             .map { r -> r.group to r }
@@ -130,11 +133,12 @@ val ruleSummaryFlow by lazy {
         val globalSubsConfigs = subsConfigs.filter { c -> c.type == SubsConfig.GlobalGroupType }
         val appSubsConfigs = subsConfigs.filter { c -> c.type == SubsConfig.AppType }
         val groupSubsConfigs = subsConfigs.filter { c -> c.type == SubsConfig.AppGroupType }
-        val appRules = mutableMapOf<String, MutableList<AppRule>>()
-        val appGroups = mutableMapOf<String, List<RawSubscription.RawAppGroup>>()
-        val appAllGroups = mutableMapOf<String, List<Pair<RawSubscription.RawAppGroup, Boolean>>>()
+        val appRules = HashMap<String, MutableList<AppRule>>()
+        val appGroups = HashMap<String, List<RawSubscription.RawAppGroup>>()
+        val appAllGroups =
+            HashMap<String, List<ResolvedAppGroup>>()
         val globalRules = mutableListOf<GlobalRule>()
-        val globalGroups = mutableListOf<RawSubscription.RawGlobalGroup>()
+        val globalGroups = mutableListOf<ResolvedGlobalGroup>()
         subsItems.filter { it.enable }.forEach { subsItem ->
             val rawSubs = subsIdToRaw[subsItem.id] ?: return@forEach
 
@@ -146,14 +150,18 @@ val ruleSummaryFlow by lazy {
                 g.valid && (subGlobalSubsConfigs.find { c -> c.groupKey == g.key }?.enable
                     ?: g.enable ?: true)
             }.forEach { groupRaw ->
-                globalGroups.add(groupRaw)
+                val config = subGlobalSubsConfigs.find { c -> c.groupKey == groupRaw.key }
+                val g = ResolvedGlobalGroup(
+                    group = groupRaw,
+                    subscription = rawSubs,
+                    subsItem = subsItem,
+                    config = config
+                )
+                globalGroups.add(g)
                 val subRules = groupRaw.rules.map { ruleRaw ->
                     GlobalRule(
                         rule = ruleRaw,
-                        group = groupRaw,
-                        rawSubs = rawSubs,
-                        subsItem = subsItem,
-                        exclude = subGlobalSubsConfigs.find { c -> c.groupKey == groupRaw.key }?.exclude,
+                        g = g,
                         appInfoCache = appInfoCache,
                     )
                 }
@@ -179,31 +187,34 @@ val ruleSummaryFlow by lazy {
                 val subAppGroups = mutableListOf<RawSubscription.RawAppGroup>()
                 val appGroupConfigs = subGroupSubsConfigs.filter { c -> c.appId == appRaw.id }
                 val subAppGroupToRules = mutableMapOf<RawSubscription.RawAppGroup, List<AppRule>>()
-                val groupAndEnables = appRaw.groups.map { groupRaw ->
-                    val enable = groupRaw.valid && getGroupRawEnable(
-                        groupRaw,
-                        appGroupConfigs,
-                        rawSubs.groupToCategoryMap[groupRaw],
-                        subCategoryConfigs
+                val groupAndEnables = appRaw.groups.map { group ->
+                    val enable = group.valid && getGroupRawEnable(
+                        group,
+                        appGroupConfigs.find { c -> c.groupKey == group.key },
+                        rawSubs.groupToCategoryMap[group],
+                        subCategoryConfigs.find { c -> c.categoryKey == rawSubs.groupToCategoryMap[group]?.key }
                     )
-                    groupRaw to enable
+                    ResolvedAppGroup(
+                        group = group,
+                        subscription = rawSubs,
+                        subsItem = subsItem,
+                        config = appGroupConfigs.find { c -> c.groupKey == group.key },
+                        app = appRaw,
+                        enable = enable
+                    )
                 }
                 appAllGroups[appRaw.id] = (appAllGroups[appRaw.id] ?: emptyList()) + groupAndEnables
-                groupAndEnables.forEach { (groupRaw, enable) ->
-                    if (enable) {
-                        subAppGroups.add(groupRaw)
-                        val subRules = groupRaw.rules.map { ruleRaw ->
+                groupAndEnables.forEach { g ->
+                    if (g.enable) {
+                        subAppGroups.add(g.group)
+                        val subRules = g.group.rules.map { ruleRaw ->
                             AppRule(
                                 rule = ruleRaw,
-                                group = groupRaw,
-                                app = appRaw,
-                                rawSubs = rawSubs,
-                                subsItem = subsItem,
-                                exclude = appGroupConfigs.find { c -> c.groupKey == groupRaw.key }?.exclude,
+                                g = g,
                                 appInfo = appInfoCache[appRaw.id]
                             )
                         }.filter { r -> r.enable }
-                        subAppGroupToRules[groupRaw] = subRules
+                        subAppGroupToRules[g.group] = subRules
                         if (subRules.isNotEmpty()) {
                             val rules = appRules[appRaw.id] ?: mutableListOf()
                             appRules[appRaw.id] = rules
@@ -236,30 +247,68 @@ fun initSubsState() {
     subsItemsFlow.value
     appScope.launchTry(Dispatchers.IO) {
         if (subsFolder.exists() && subsFolder.isDirectory) {
-            val fileRegex = Regex("^-?\\d+\\.json$")
-            val files =
-                subsFolder.listFiles { f -> f.isFile && f.name.matches(fileRegex) } ?: emptyArray()
-            val subscriptions = files.mapNotNull { f ->
-                try {
-                    RawSubscription.parse(f.readText())
-                } catch (e: Exception) {
-                    LogUtils.d("加载订阅文件失败", e)
-                    null
+            updateSubsFileMutex.withLock {
+                val fileRegex = Regex("^-?\\d+\\.json$")
+                val files =
+                    subsFolder.listFiles { f -> f.isFile && f.name.matches(fileRegex) }
+                        ?: emptyArray()
+                val subscriptions = files.mapNotNull { f ->
+                    try {
+                        RawSubscription.parse(f.readText())
+                    } catch (e: Exception) {
+                        LogUtils.d("加载订阅文件失败", e)
+                        null
+                    }
                 }
+                val newMap = subsIdToRawFlow.value.toMutableMap()
+                subscriptions.forEach { s ->
+                    newMap[s.id] = s
+                }
+                subsIdToRawFlow.value = newMap.toImmutableMap()
             }
-            val newMap = subsIdToRawFlow.value.toMutableMap()
-            subscriptions.forEach { s ->
-                newMap[s.id] = s
-            }
-            if (newMap[-2] == null) {
-                newMap[-2] = RawSubscription(
-                    id = -2,
-                    name = "本地订阅",
-                    version = 0,
-                    author = "gkd",
-                )
-            }
-            subsIdToRawFlow.value = newMap.toImmutableMap()
         }
+    }
+}
+
+fun checkSubsUpdate() = appScope.launchTry(Dispatchers.IO) { // 自动从网络更新订阅文件
+    updateSubsFileMutex.withLock {
+        LogUtils.d("开始自动检测更新")
+        subsItemsFlow.value.forEach { subsItem ->
+            if (subsItem.updateUrl == null) return@forEach
+            try {
+                val oldSubsRaw = subsIdToRawFlow.value[subsItem.id]
+                if (oldSubsRaw?.checkUpdateUrl != null) {
+                    try {
+                        val subsVersion =
+                            client.get(oldSubsRaw.checkUpdateUrl).body<SubsVersion>()
+                        LogUtils.d("快速检测更新成功", subsVersion)
+                        if (subsVersion.id == oldSubsRaw.id && subsVersion.version <= oldSubsRaw.version) {
+                            return@forEach
+                        }
+                    } catch (e: Exception) {
+                        LogUtils.d("快速检测更新失败", subsItem, e)
+                    }
+                }
+                val newSubsRaw = RawSubscription.parse(
+                    client.get(oldSubsRaw?.updateUrl ?: subsItem.updateUrl).bodyAsText()
+                )
+                if (newSubsRaw.id != subsItem.id) {
+                    return@forEach
+                }
+                if (oldSubsRaw != null && newSubsRaw.version <= oldSubsRaw.version) {
+                    return@forEach
+                }
+                updateSubscription(newSubsRaw)
+                val newItem = subsItem.copy(
+                    mtime = System.currentTimeMillis()
+                )
+                DbSet.subsItemDao.update(newItem)
+                LogUtils.d("更新订阅文件:${newSubsRaw.name}")
+            } catch (e: Exception) {
+                e.printStackTrace()
+                LogUtils.d("检测更新失败", e)
+            }
+        }
+        LogUtils.d("自动检测更新结束")
     }
 }

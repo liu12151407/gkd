@@ -52,10 +52,14 @@ data class Store(
     val clickToast: String = "GKD",
     val autoClearMemorySubs: Boolean = true,
     val hideSnapshotStatusBar: Boolean = false,
-    val enableShizuku: Boolean = false,
+    val enableShizukuActivity: Boolean = false,
+    val enableShizukuClick: Boolean = false,
     val log2FileSwitch: Boolean = true,
     val enableDarkTheme: Boolean? = null,
     val enableAbFloatWindow: Boolean = true,
+    val sortType: Int = SortTypeOption.SortByName.value,
+    val showSystemApp: Boolean = true,
+    val showHiddenApp: Boolean = false,
 )
 
 val storeFlow by lazy {

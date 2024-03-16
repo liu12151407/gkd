@@ -36,8 +36,10 @@ import li.songe.gkd.util.appInfoCacheFlow
 import li.songe.gkd.util.clickCountFlow
 import li.songe.gkd.util.client
 import li.songe.gkd.util.launchTry
+import li.songe.gkd.util.map
 import li.songe.gkd.util.orderedAppInfosFlow
 import li.songe.gkd.util.ruleSummaryFlow
+import li.songe.gkd.util.storeFlow
 import li.songe.gkd.util.subsIdToRawFlow
 import li.songe.gkd.util.subsItemsFlow
 import li.songe.gkd.util.toast
@@ -171,7 +173,7 @@ class HomeVm @Inject constructor() : ViewModel() {
         var errorNum = 0
         val oldSubItems = subsItemsFlow.value
         val newSubsItems = oldSubItems.mapNotNull { oldItem ->
-            if (oldItem.updateUrl == null) return@mapNotNull null
+            if (oldItem.updateUrl == null || oldItem.id < 0) return@mapNotNull null
             val oldSubsRaw = subsIdToRawFlow.value[oldItem.id]
             try {
                 if (oldSubsRaw?.checkUpdateUrl != null) {
@@ -229,13 +231,22 @@ class HomeVm @Inject constructor() : ViewModel() {
         appIds.mapIndexed { index, appId -> appId to index }.toMap()
     }
 
-    val sortTypeFlow = MutableStateFlow<SortTypeOption>(SortTypeOption.SortByName)
-    val showSystemAppFlow = MutableStateFlow(false)
+    val sortTypeFlow = storeFlow.map(viewModelScope) { s ->
+        SortTypeOption.allSubObject.find { o -> o.value == s.sortType } ?: SortTypeOption.SortByName
+    }
+    val showSystemAppFlow = storeFlow.map(viewModelScope) { s -> s.showSystemApp }
+    val showHiddenAppFlow = storeFlow.map(viewModelScope) { s -> s.showHiddenApp }
     val searchStrFlow = MutableStateFlow("")
     private val debounceSearchStrFlow = searchStrFlow.debounce(200)
         .stateIn(viewModelScope, SharingStarted.Eagerly, searchStrFlow.value)
     val appInfosFlow =
-        combine(orderedAppInfosFlow.combine(showSystemAppFlow) { appInfos, showSystemApp ->
+        combine(orderedAppInfosFlow.combine(showHiddenAppFlow) { appInfos, showHiddenApp ->
+            if (showHiddenApp) {
+                appInfos
+            } else {
+                appInfos.filter { a -> !a.hidden }
+            }
+        }.combine(showSystemAppFlow) { appInfos, showSystemApp ->
             if (showSystemApp) {
                 appInfos
             } else {

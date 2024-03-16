@@ -1,11 +1,9 @@
 package li.songe.gkd.service
 
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import li.songe.gkd.app
-import li.songe.gkd.appScope
 import li.songe.gkd.data.AppRule
 import li.songe.gkd.data.ClickLog
 import li.songe.gkd.data.GlobalRule
@@ -15,7 +13,6 @@ import li.songe.gkd.db.DbSet
 import li.songe.gkd.util.RuleSummary
 import li.songe.gkd.util.getDefaultLauncherAppId
 import li.songe.gkd.util.increaseClickCount
-import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.recordStoreFlow
 import li.songe.gkd.util.ruleSummaryFlow
 
@@ -112,28 +109,26 @@ fun updateLauncherAppId() {
     launcherAppId = app.packageManager.getDefaultLauncherAppId() ?: ""
 }
 
-val clickLogMutex = Mutex()
-fun insertClickLog(rule: ResolvedRule) {
-    appScope.launchTry(Dispatchers.IO) {
-        clickLogMutex.withLock {
-            increaseClickCount()
-            val clickLog = ClickLog(
-                appId = topActivityFlow.value.appId,
-                activityId = topActivityFlow.value.activityId,
-                subsId = rule.subsItem.id,
-                subsVersion = rule.rawSubs.version,
-                groupKey = rule.group.key,
-                groupType = when (rule) {
-                    is AppRule -> SubsConfig.AppGroupType
-                    is GlobalRule -> SubsConfig.GlobalGroupType
-                },
-                ruleIndex = rule.index,
-                ruleKey = rule.key,
-            )
-            DbSet.clickLogDao.insert(clickLog)
-            if (recordStoreFlow.value.clickCount % 100 == 0) {
-                DbSet.clickLogDao.deleteKeepLatest()
-            }
+val clickLogMutex by lazy { Mutex() }
+suspend fun insertClickLog(rule: ResolvedRule) {
+    clickLogMutex.withLock {
+        increaseClickCount()
+        val clickLog = ClickLog(
+            appId = topActivityFlow.value.appId,
+            activityId = topActivityFlow.value.activityId,
+            subsId = rule.subsItem.id,
+            subsVersion = rule.rawSubs.version,
+            groupKey = rule.g.group.key,
+            groupType = when (rule) {
+                is AppRule -> SubsConfig.AppGroupType
+                is GlobalRule -> SubsConfig.GlobalGroupType
+            },
+            ruleIndex = rule.index,
+            ruleKey = rule.key,
+        )
+        DbSet.clickLogDao.insert(clickLog)
+        if (recordStoreFlow.value.clickCount % 100 == 0) {
+            DbSet.clickLogDao.deleteKeepLatest()
         }
     }
 }

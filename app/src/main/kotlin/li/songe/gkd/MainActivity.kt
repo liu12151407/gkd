@@ -12,11 +12,12 @@ import com.dylanc.activityresult.launcher.RequestPermissionLauncher
 import com.dylanc.activityresult.launcher.StartActivityLauncher
 import com.ramcosta.composedestinations.DestinationsNavHost
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import li.songe.gkd.composition.CompositionActivity
 import li.songe.gkd.composition.CompositionExt.useLifeCycleLog
 import li.songe.gkd.service.ManageService
-import li.songe.gkd.service.updateLauncherAppId
 import li.songe.gkd.ui.NavGraphs
 import li.songe.gkd.ui.component.ConfirmDialog
 import li.songe.gkd.ui.theme.AppTheme
@@ -47,10 +48,8 @@ class MainActivity : CompositionActivity({
         }
     }
 
-    // 每次打开页面更新记录桌面 appId
-    updateLauncherAppId()
-
     ManageService.autoStart(this)
+    mainVm
 
     setContent {
         val navController = rememberNavController()
@@ -74,7 +73,19 @@ class MainActivity : CompositionActivity({
     }
 }) {
     val mainVm by viewModels<MainViewModel>()
+
+    override fun onStart() {
+        super.onStart()
+        activityVisibleFlow.update { it + 1 }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        activityVisibleFlow.update { it - 1 }
+    }
 }
+
+val activityVisibleFlow = MutableStateFlow(0)
 
 
 

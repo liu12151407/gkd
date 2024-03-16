@@ -1,6 +1,6 @@
 package li.songe.gkd.data
 
-import android.os.Parcelable
+import androidx.paging.PagingSource
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Delete
@@ -10,12 +10,11 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
-import kotlinx.parcelize.Parcelize
+import li.songe.gkd.util.format
 
 @Entity(
     tableName = "click_log",
 )
-@Parcelize
 data class ClickLog(
     @PrimaryKey @ColumnInfo(name = "id") val id: Long = System.currentTimeMillis(),
     @ColumnInfo(name = "app_id") val appId: String? = null,
@@ -26,7 +25,26 @@ data class ClickLog(
     @ColumnInfo(name = "group_type", defaultValue = "2") val groupType: Int,
     @ColumnInfo(name = "rule_index") val ruleIndex: Int,
     @ColumnInfo(name = "rule_key") val ruleKey: Int? = null,
-) : Parcelable {
+) {
+
+    val showActivityId by lazy {
+        if (activityId != null) {
+            if (appId != null && activityId.startsWith(
+                    appId
+                )
+            ) {
+                activityId.substring(appId.length)
+            } else {
+                activityId
+            }
+        } else {
+            null
+        }
+    }
+
+    val date by lazy { id.format("MM-dd HH:mm:ss") }
+
+
     @Dao
     interface TriggerLogDao {
 
@@ -49,12 +67,31 @@ data class ClickLog(
         @Query("SELECT * FROM click_log ORDER BY id DESC LIMIT 1000")
         fun query(): Flow<List<ClickLog>>
 
+        @Query("SELECT * FROM click_log ORDER BY id DESC ")
+        fun pagingSource(): PagingSource<Int, ClickLog>
+
         @Query("SELECT COUNT(*) FROM click_log")
         fun count(): Flow<Int>
 
 
         @Query("SELECT * FROM click_log ORDER BY id DESC LIMIT 1")
         fun queryLatest(): Flow<ClickLog?>
+
+        @Query(
+            """
+            SELECT cl.* FROM click_log AS cl
+            INNER JOIN (
+                SELECT subs_id, group_key, MAX(id) AS max_id FROM click_log
+                WHERE app_id = :appId
+                  AND group_type = :groupType
+                  AND subs_id IN (SELECT si.id FROM subs_item si WHERE si.enable = 1)
+                GROUP BY subs_id, group_key
+            ) AS latest_logs ON cl.subs_id = latest_logs.subs_id 
+            AND cl.group_key = latest_logs.group_key 
+            AND cl.id = latest_logs.max_id
+        """
+        )
+        fun queryAppLatest(appId: String, groupType: Int): Flow<List<ClickLog>>
 
 
         @Query(

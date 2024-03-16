@@ -1,6 +1,7 @@
 package li.songe.gkd.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
@@ -19,9 +21,13 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -29,6 +35,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,6 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import li.songe.gkd.data.CategoryConfig
 import li.songe.gkd.data.RawSubscription
 import li.songe.gkd.db.DbSet
+import li.songe.gkd.ui.component.getDialogResult
 import li.songe.gkd.ui.home.enableGroupRadioOptions
 import li.songe.gkd.util.LocalNavController
 import li.songe.gkd.util.ProfileTransitions
@@ -70,9 +79,6 @@ fun CategoryPage(subsItemId: Long) {
     var showAddDlg by remember {
         mutableStateOf(false)
     }
-    val (menuCategory, setMenuCategory) = remember {
-        mutableStateOf<RawSubscription.RawCategory?>(null)
-    }
     var editEnableCategory by remember {
         mutableStateOf<RawSubscription.RawCategory?>(null)
     }
@@ -83,8 +89,9 @@ fun CategoryPage(subsItemId: Long) {
     val categories = subsRaw?.categories ?: emptyList()
     val categoriesGroups = subsRaw?.categoryToGroupsMap ?: emptyMap()
 
-    Scaffold(topBar = {
-        TopAppBar(navigationIcon = {
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    Scaffold(modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection), topBar = {
+        TopAppBar(scrollBehavior = scrollBehavior, navigationIcon = {
             IconButton(onClick = {
                 navController.popBackStack()
             }) {
@@ -93,7 +100,7 @@ fun CategoryPage(subsItemId: Long) {
                     contentDescription = null,
                 )
             }
-        }, title = { Text(text = "${subsRaw?.name ?: subsItemId}/规则类别") }, actions = {})
+        }, title = { Text(text = "规则类别/${subsRaw?.name ?: subsItemId}") }, actions = {})
     }, floatingActionButton = {
         if (editable) {
             FloatingActionButton(onClick = { showAddDlg = true }) {
@@ -103,7 +110,7 @@ fun CategoryPage(subsItemId: Long) {
                 )
             }
         }
-    }, content = { contentPadding ->
+    }) { contentPadding ->
         LazyColumn(
             modifier = Modifier.padding(contentPadding)
         ) {
@@ -119,20 +126,75 @@ fun CategoryPage(subsItemId: Long) {
                         Text(
                             text = category.name, fontSize = 18.sp
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = if (size > 0) "${size}规则组" else "暂无规则", fontSize = 14.sp
-                        )
-                    }
-                    if (editable) {
-                        IconButton(onClick = {
-                            setMenuCategory(category)
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = null,
+                        if (size > 0) {
+                            Text(
+                                text = "${size}规则组",
+                                fontSize = 14.sp
+                            )
+                        } else {
+                            Text(
+                                text = "暂无规则",
+                                fontSize = 14.sp,
+                                color = LocalContentColor.current.copy(alpha = 0.5f)
                             )
                         }
+                    }
+                    if (editable) {
+                        var expanded by remember { mutableStateOf(false) }
+                        Box(
+                            modifier = Modifier
+                                .wrapContentSize(Alignment.TopStart)
+                        ) {
+                            IconButton(onClick = {
+                                expanded = true
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreVert,
+                                    contentDescription = null,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = expanded,
+                                onDismissRequest = { expanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(text = "编辑")
+                                    },
+                                    onClick = {
+                                        expanded = false
+                                        setEditNameCategory(category)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(text = "删除", color = MaterialTheme.colorScheme.error)
+                                    },
+                                    onClick = {
+                                        expanded = false
+                                        vm.viewModelScope.launchTry {
+                                            val result = getDialogResult(
+                                                "删除类别",
+                                                "是否删除类别 ${category.name} ?"
+                                            )
+                                            if (!result) return@launchTry
+                                            subsItem?.apply {
+                                                updateSubscription(subsRaw!!.copy(
+                                                    categories = subsRaw!!.categories.filter { c -> c.key != category.key }
+                                                ))
+                                                DbSet.subsItemDao.update(copy(mtime = System.currentTimeMillis()))
+                                            }
+                                            DbSet.categoryConfigDao.deleteByCategoryKey(
+                                                subsItemId,
+                                                category.key
+                                            )
+                                            toast("删除成功")
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
                         Spacer(modifier = Modifier.width(10.dp))
                     }
                     Row(
@@ -153,21 +215,24 @@ fun CategoryPage(subsItemId: Long) {
                         )
                     }
                 }
+                if (categories.lastOrNull() !== category) {
+                    HorizontalDivider()
+                }
             }
             item {
+                Spacer(modifier = Modifier.height(40.dp))
                 if (categories.isEmpty()) {
-                    Spacer(modifier = Modifier.height(40.dp))
                     Text(
                         text = "暂无类别",
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
-                } else {
-                    Spacer(modifier = Modifier.height(20.dp))
+                } else if (editable) {
+                    Spacer(modifier = Modifier.height(40.dp))
                 }
             }
         }
-    })
+    }
 
     editEnableCategory?.let { category ->
         val categoryConfig =
@@ -181,37 +246,35 @@ fun CategoryPage(subsItemId: Long) {
                     .padding(16.dp),
                 shape = RoundedCornerShape(16.dp),
             ) {
-                Column {
-                    enableGroupRadioOptions.forEach { option ->
-                        val onClick: () -> Unit = {
-                            vm.viewModelScope.launchTry(Dispatchers.IO) {
-                                DbSet.categoryConfigDao.insert(
-                                    (categoryConfig ?: CategoryConfig(
-                                        enable = option.second,
-                                        subsItemId = subsItemId,
-                                        categoryKey = category.key
-                                    )).copy(enable = option.second)
-                                )
-                            }
+                enableGroupRadioOptions.forEach { option ->
+                    val onClick: () -> Unit = {
+                        vm.viewModelScope.launchTry(Dispatchers.IO) {
+                            DbSet.categoryConfigDao.insert(
+                                (categoryConfig ?: CategoryConfig(
+                                    enable = option.second,
+                                    subsItemId = subsItemId,
+                                    categoryKey = category.key
+                                )).copy(enable = option.second)
+                            )
                         }
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = (option.second == enable),
-                                    onClick = onClick
-                                )
-                                .padding(horizontal = 16.dp)
-                        ) {
-                            RadioButton(
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
                                 selected = (option.second == enable),
                                 onClick = onClick
                             )
-                            Text(
-                                text = option.first, modifier = Modifier.padding(start = 16.dp)
-                            )
-                        }
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        RadioButton(
+                            selected = (option.second == enable),
+                            onClick = onClick
+                        )
+                        Text(
+                            text = option.first, modifier = Modifier.padding(start = 16.dp)
+                        )
                     }
                 }
             }
@@ -242,7 +305,7 @@ fun CategoryPage(subsItemId: Long) {
             },
             confirmButton = {
                 TextButton(
-                    enabled = source.isNotEmpty() && source != editNameCategory.name,
+                    enabled = source.isNotBlank() && source != editNameCategory.name,
                     onClick = {
                         if (categories.any { c -> c.key != editNameCategory.key && c.name == source }) {
                             toast("不可添加同名类别")
@@ -264,7 +327,8 @@ fun CategoryPage(subsItemId: Long) {
                             toast("修改成功")
                             setEditNameCategory(null)
                         }
-                    }) {
+                    }
+                ) {
                     Text(text = "确认")
                 }
             }
@@ -319,47 +383,4 @@ fun CategoryPage(subsItemId: Long) {
             }
         )
     }
-
-    if (menuCategory != null && subsRawVal != null) {
-        Dialog(onDismissRequest = { setMenuCategory(null) }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Column {
-                    Text(text = "编辑", modifier = Modifier
-                        .clickable {
-                            setEditNameCategory(menuCategory)
-                            setMenuCategory(null)
-                        }
-                        .padding(16.dp)
-                        .fillMaxWidth())
-                    Text(text = "删除", modifier = Modifier
-                        .clickable {
-                            vm.viewModelScope.launchTry(Dispatchers.IO) {
-                                subsItem?.apply {
-                                    updateSubscription(subsRawVal.copy(
-                                        categories = subsRawVal.categories.filter { c -> c.key != menuCategory.key }
-                                    ))
-                                    DbSet.subsItemDao.update(copy(mtime = System.currentTimeMillis()))
-                                }
-                                DbSet.categoryConfigDao.deleteByCategoryKey(
-                                    subsItemId,
-                                    menuCategory.key
-                                )
-                                toast("删除成功")
-                                setMenuCategory(null)
-                            }
-                        }
-                        .padding(16.dp)
-                        .fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-        }
-    }
-
 }

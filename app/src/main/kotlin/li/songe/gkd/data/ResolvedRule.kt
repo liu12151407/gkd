@@ -3,28 +3,35 @@ package li.songe.gkd.data
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.Job
+import li.songe.gkd.service.CacheTransform
+import li.songe.gkd.service.createCacheTransform
 import li.songe.gkd.service.lastTriggerRule
 import li.songe.gkd.service.lastTriggerTime
 import li.songe.gkd.service.querySelector
+import li.songe.gkd.util.ResolvedGroup
 import li.songe.selector.Selector
 
 sealed class ResolvedRule(
     val rule: RawSubscription.RawRuleProps,
-    val group: RawSubscription.RawGroupProps,
-    val rawSubs: RawSubscription,
-    val subsItem: SubsItem,
-    val exclude: String?,
+    val g: ResolvedGroup,
 ) {
+    private val group = g.group
+    val subsItem = g.subsItem
+    val rawSubs = g.subscription
+    val config = g.config
     val key = rule.key
-    val index = group.rules.indexOf(rule)
+    val index = group.rules.indexOfFirst { r -> r === rule }
     private val preKeys = (rule.preKeys ?: emptyList()).toSet()
-    private val resetMatch = rule.resetMatch ?: group.resetMatch
     private val matches = rule.matches?.map { s -> Selector.parse(s) } ?: emptyList()
     private val excludeMatches = (rule.excludeMatches ?: emptyList()).map { s -> Selector.parse(s) }
+
+    private val resetMatch = rule.resetMatch ?: group.resetMatch
     val matchDelay = rule.matchDelay ?: group.matchDelay ?: 0L
     val actionDelay = rule.actionDelay ?: group.actionDelay ?: 0L
     private val matchTime = rule.matchTime ?: group.matchTime
+    private val forcedTime = rule.forcedTime ?: group.forcedTime ?: 0L
     private val quickFind = rule.quickFind ?: group.quickFind ?: false
+    val order = rule.order ?: group.order ?: 0
 
     private val actionCdKey = rule.actionCdKey ?: group.actionCdKey
     private val actionCd = rule.actionCd ?: if (actionCdKey != null) {
@@ -39,8 +46,6 @@ sealed class ResolvedRule(
     } else {
         null
     } ?: group.actionMaximum
-
-    val order = rule.order ?: group.order ?: 0
 
     private val slowSelectors by lazy {
         (matches + excludeMatches).filterNot { s ->
@@ -97,6 +102,11 @@ sealed class ResolvedRule(
         return false
     }
 
+    fun checkForced(): Boolean {
+        if (forcedTime <= 0) return false
+        return System.currentTimeMillis() < matchChangedTime + matchDelay + forcedTime
+    }
+
     private var actionTriggerTime = Value(0L)
     fun trigger() {
         actionTriggerTime.value = System.currentTimeMillis()
@@ -119,21 +129,52 @@ sealed class ResolvedRule(
         else -> true
     }
 
-    fun query(nodeInfo: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+    private val canCacheIndex = (matches + excludeMatches).any { s -> s.canCacheIndex }
+
+    fun query(
+        nodeInfo: AccessibilityNodeInfo?,
+        cacheTransform: CacheTransform? = null
+    ): AccessibilityNodeInfo? {
         if (nodeInfo == null) return null
         var target: AccessibilityNodeInfo? = null
-        for (selector in matches) {
-            target = nodeInfo.querySelector(selector, quickFind) ?: return null
+        if (canCacheIndex) {
+            val transform = cacheTransform ?: createCacheTransform()
+            for (selector in matches) {
+                target = nodeInfo.querySelector(selector, quickFind, transform.transform)
+                    ?: return null
+            }
+            for (selector in excludeMatches) {
+                if (nodeInfo.querySelector(
+                        selector,
+                        quickFind,
+                        transform.transform
+                    ) != null
+                ) return null
+            }
+        } else {
+            for (selector in matches) {
+                target = nodeInfo.querySelector(selector, quickFind) ?: return null
+            }
+            for (selector in excludeMatches) {
+                if (nodeInfo.querySelector(selector, quickFind) != null) return null
+            }
         }
-        for (selector in excludeMatches) {
-            if (nodeInfo.querySelector(selector, quickFind) != null) return null
-        }
+
         return target
     }
 
-    private val fc = getActionFc(rule.action)
-    fun performAction(context: AccessibilityService, node: AccessibilityNodeInfo): ActionResult {
-        return fc(context, node, rule.position)
+    private val performer = ActionPerformer.getAction(
+        rule.action ?: rule.position?.let {
+            ActionPerformer.ClickCenter.action
+        }
+    )
+
+    fun performAction(
+        context: AccessibilityService,
+        node: AccessibilityNodeInfo,
+        shizukuClickFc: ((x: Float, y: Float) -> Boolean?)? = null
+    ): ActionResult {
+        return performer.perform(context, node, rule.position, shizukuClickFc)
     }
 
     var matchDelayJob: Job? = null
@@ -174,7 +215,7 @@ sealed class ResolvedRule(
         return "id:${subsItem.id}, v:${rawSubs.version}, type:${type}, gKey=${group.key}, gName:${group.name}, index:${index}, key:${key}, status:${status.name}"
     }
 
-    val excludeData = ExcludeData.parse(exclude)
+    val excludeData = ExcludeData.parse(config?.exclude)
 
     abstract val type: String
 

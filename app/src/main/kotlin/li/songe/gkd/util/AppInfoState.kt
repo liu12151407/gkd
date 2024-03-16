@@ -26,17 +26,7 @@ val systemAppsFlow = systemAppInfoCacheFlow.map(appScope) { c -> c.keys }
 
 val orderedAppInfosFlow = appInfoCacheFlow.map(appScope) { c ->
     c.values.sortedWith { a, b ->
-        collator.compare(
-            if (a.isSystem) {
-                "\uFFFF${a.name}"
-            } else {
-                a.name
-            }, if (b.isSystem) {
-                "\uFFFF${b.name}"
-            } else {
-                b.name
-            }
-        )
+        collator.compare(a.name, b.name)
     }.toImmutableList()
 }
 
@@ -50,7 +40,7 @@ private val packageReceiver by lazy {
             val appId = intent?.data?.schemeSpecificPart ?: return
             if (intent.action == Intent.ACTION_PACKAGE_ADDED || intent.action == Intent.ACTION_PACKAGE_REPLACED || intent.action == Intent.ACTION_PACKAGE_REMOVED) {
                 // update
-                updateAppInfo(listOf(appId))
+                updateAppInfo(appId)
             }
         }
     }.apply {
@@ -78,43 +68,44 @@ private val packageReceiver by lazy {
 
 private val updateAppMutex by lazy { Mutex() }
 
-fun updateAppInfo(appIds: List<String>) {
-    if (appIds.isEmpty()) return
+private fun updateAppInfo(appId: String) {
     appScope.launchTry(Dispatchers.IO) {
         val packageManager = app.packageManager
         updateAppMutex.withLock {
             val newMap = appInfoCacheFlow.value.toMutableMap()
-            appIds.forEach { appId ->
-                val info = try {
-                    packageManager.getPackageInfo(appId, 0)
-                } catch (e: PackageManager.NameNotFoundException) {
-                    null
-                }
-                val newAppInfo = info?.toAppInfo()
-                if (newAppInfo != null) {
-                    newMap[appId] = newAppInfo
-                } else {
-                    newMap.remove(appId)
-                }
+            val info = try {
+                packageManager.getPackageInfo(appId, 0)
+            } catch (e: PackageManager.NameNotFoundException) {
+                null
+            }
+            val newAppInfo = info?.toAppInfo()
+            if (newAppInfo != null) {
+                newMap[appId] = newAppInfo
+            } else {
+                newMap.remove(appId)
             }
             appInfoCacheFlow.value = newMap.toImmutableMap()
         }
     }
 }
 
+suspend fun initOrResetAppInfoCache() {
+    if (updateAppMutex.isLocked) return
+    updateAppMutex.withLock {
+        val appMap = mutableMapOf<String, AppInfo>()
+        app.packageManager.getInstalledPackages(0).forEach { packageInfo ->
+            val info = packageInfo.toAppInfo()
+            if (info != null) {
+                appMap[packageInfo.packageName] = info
+            }
+        }
+        appInfoCacheFlow.value = appMap.toImmutableMap()
+    }
+}
+
 fun initAppState() {
     packageReceiver
     appScope.launchTry(Dispatchers.IO) {
-        updateAppMutex.withLock {
-            val appMap = mutableMapOf<String, AppInfo>()
-            app.packageManager.getInstalledPackages(0)
-                .forEach { packageInfo ->
-                    val info = packageInfo.toAppInfo()
-                    if (info != null) {
-                        appMap[packageInfo.packageName] = info
-                    }
-                }
-            appInfoCacheFlow.value = appMap.toImmutableMap()
-        }
+        initOrResetAppInfoCache()
     }
 }

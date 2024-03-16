@@ -54,8 +54,8 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
 
         applicationId = "li.songe.gkd"
-        versionCode = 19
-        versionName = "1.6.4"
+        versionCode = 24
+        versionName = "1.7.0-beta.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -112,6 +112,7 @@ android {
             versionNameSuffix = vnSuffix
             applicationIdSuffix = ".debug"
             resValue("string", "app_name", "GKD-debug")
+            resValue("string", "capture_label", "捕获快照-debug")
         }
     }
     compileOptions {
@@ -129,6 +130,7 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+        aidl = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.compose.compilerVersion.get()
@@ -182,7 +184,11 @@ dependencies {
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.room.paging)
     ksp(libs.androidx.room.compiler)
+
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
 
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.cio)
@@ -218,4 +224,6 @@ dependencies {
     implementation(libs.coil.gif)
 
     implementation(libs.exp4j)
+
+    implementation(libs.toaster)
 }

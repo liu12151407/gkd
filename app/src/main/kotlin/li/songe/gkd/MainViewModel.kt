@@ -3,26 +3,55 @@ package li.songe.gkd
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import li.songe.gkd.data.RawSubscription
 import li.songe.gkd.data.SubsItem
 import li.songe.gkd.db.DbSet
+import li.songe.gkd.service.updateLauncherAppId
+import li.songe.gkd.util.appInfoCacheFlow
 import li.songe.gkd.util.authActionFlow
 import li.songe.gkd.util.checkUpdate
 import li.songe.gkd.util.initFolder
+import li.songe.gkd.util.initOrResetAppInfoCache
 import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.logZipDir
 import li.songe.gkd.util.newVersionApkDir
 import li.songe.gkd.util.snapshotZipDir
 import li.songe.gkd.util.storeFlow
+import li.songe.gkd.util.updateSubscription
 
 class MainViewModel : ViewModel() {
     init {
-        appScope.launchTry(Dispatchers.IO) {
-            val localSubsItem = SubsItem(
-                id = -2, order = -2, mtime = System.currentTimeMillis()
-            )
-            if (!DbSet.subsItemDao.query().first().any { s -> s.id == localSubsItem.id }) {
+        // 在某些机型由于未知原因创建失败
+        // 在此保证每次重新打开APP都能重新检测创建
+        initFolder()
+
+        // 每次打开页面更新记录桌面 appId
+        updateLauncherAppId()
+
+        // https://github.com/gkd-kit/gkd/issues/543
+        viewModelScope.launchTry(Dispatchers.IO) {
+            while (appInfoCacheFlow.value.size < 16) {
+                initOrResetAppInfoCache()
+                delay(10_000)
+            }
+        }
+
+        val localSubsItem = SubsItem(
+            id = -2, order = -2, mtime = System.currentTimeMillis()
+        )
+        viewModelScope.launchTry(Dispatchers.IO) {
+            val subsItems = DbSet.subsItemDao.query().first()
+            if (!subsItems.any { s -> s.id == localSubsItem.id }) {
+                updateSubscription(
+                    RawSubscription(
+                        id = localSubsItem.id,
+                        name = "本地订阅",
+                        version = 0
+                    )
+                )
                 DbSet.subsItemDao.insert(localSubsItem)
             }
         }
@@ -40,14 +69,8 @@ class MainViewModel : ViewModel() {
             }
         }
 
-        viewModelScope.launchTry(Dispatchers.IO) {
-            // 在某些机型由于未知原因创建失败
-            // 在此保证每次重新打开APP都能重新检测创建
-            initFolder()
-        }
-
         if (storeFlow.value.autoCheckAppUpdate) {
-            appScope.launch {
+            viewModelScope.launch {
                 try {
                     checkUpdate()
                 } catch (e: Exception) {

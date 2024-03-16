@@ -1,6 +1,5 @@
 package li.songe.gkd.ui.home
 
-import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -25,6 +24,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -33,12 +34,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.viewModelScope
 import com.blankj.utilcode.util.ClipboardUtils
@@ -61,6 +62,7 @@ import li.songe.gkd.util.checkUpdatingFlow
 import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.logZipDir
 import li.songe.gkd.util.navigate
+import li.songe.gkd.util.shareFile
 import li.songe.gkd.util.storeFlow
 import li.songe.gkd.util.toast
 import java.io.File
@@ -102,29 +104,27 @@ fun useSettingsPage(): ScaffoldExt {
                     .padding(16.dp),
                 shape = RoundedCornerShape(16.dp),
             ) {
-                Column {
-                    updateTimeRadioOptions.forEach { option ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(selected = (option.second == store.updateSubsInterval),
-                                    onClick = {
-                                        storeFlow.value =
-                                            store.copy(updateSubsInterval = option.second)
-
-                                    })
-                                .padding(horizontal = 16.dp)
-                        ) {
-                            RadioButton(
-                                selected = (option.second == store.updateSubsInterval),
+                updateTimeRadioOptions.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = (option.second == store.updateSubsInterval),
                                 onClick = {
-                                    storeFlow.value = store.copy(updateSubsInterval = option.second)
+                                    storeFlow.value =
+                                        store.copy(updateSubsInterval = option.second)
+
                                 })
-                            Text(
-                                text = option.first, modifier = Modifier.padding(start = 16.dp)
-                            )
-                        }
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        RadioButton(
+                            selected = (option.second == store.updateSubsInterval),
+                            onClick = {
+                                storeFlow.value = store.copy(updateSubsInterval = option.second)
+                            })
+                        Text(
+                            text = option.first, modifier = Modifier.padding(start = 16.dp)
+                        )
                     }
                 }
             }
@@ -139,28 +139,26 @@ fun useSettingsPage(): ScaffoldExt {
                     .padding(16.dp),
                 shape = RoundedCornerShape(16.dp),
             ) {
-                Column {
-                    darkThemeRadioOptions.forEach { option ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(selected = (option.second == store.enableDarkTheme),
-                                    onClick = {
-                                        storeFlow.value =
-                                            store.copy(enableDarkTheme = option.second)
-                                    })
-                                .padding(horizontal = 16.dp)
-                        ) {
-                            RadioButton(
-                                selected = (option.second == store.enableDarkTheme),
+                darkThemeRadioOptions.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = (option.second == store.enableDarkTheme),
                                 onClick = {
-                                    storeFlow.value = store.copy(enableDarkTheme = option.second)
+                                    storeFlow.value =
+                                        store.copy(enableDarkTheme = option.second)
                                 })
-                            Text(
-                                text = option.first, modifier = Modifier.padding(start = 16.dp)
-                            )
-                        }
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        RadioButton(
+                            selected = (option.second == store.enableDarkTheme),
+                            onClick = {
+                                storeFlow.value = store.copy(enableDarkTheme = option.second)
+                            })
+                        Text(
+                            text = option.first, modifier = Modifier.padding(start = 16.dp)
+                        )
                     }
                 }
             }
@@ -188,20 +186,23 @@ fun useSettingsPage(): ScaffoldExt {
                 },
             )
         }, onDismissRequest = { showToastInputDlg = false }, confirmButton = {
-            TextButton(onClick = {
-                storeFlow.value = store.copy(
-                    clickToast = value
-                )
-                showToastInputDlg = false
-            }) {
+            TextButton(
+                enabled = value.isNotEmpty(),
+                onClick = {
+                    storeFlow.value = store.copy(
+                        clickToast = value
+                    )
+                    showToastInputDlg = false
+                }
+            ) {
                 Text(
-                    text = "确认", modifier = Modifier
+                    text = "确认",
                 )
             }
         }, dismissButton = {
             TextButton(onClick = { showToastInputDlg = false }) {
                 Text(
-                    text = "取消", modifier = Modifier
+                    text = "取消",
                 )
             }
         })
@@ -215,49 +216,33 @@ fun useSettingsPage(): ScaffoldExt {
                     .padding(16.dp),
                 shape = RoundedCornerShape(16.dp),
             ) {
-                Column {
-                    val modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                    Text(
-                        text = "调用系统分享", modifier = Modifier
-                            .clickable(onClick = {
-                                showShareLogDlg = false
-                                vm.viewModelScope.launchTry(Dispatchers.IO) {
-                                    val logZipFile = File(logZipDir, "log.zip")
-                                    ZipUtils.zipFiles(LogUtils.getLogFiles(), logZipFile)
-                                    val uri = FileProvider.getUriForFile(
-                                        context, "${context.packageName}.provider", logZipFile
-                                    )
-                                    val intent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        type = "application/zip"
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(
-                                        Intent.createChooser(
-                                            intent, "分享日志文件"
-                                        )
-                                    )
-                                }
-                            })
-                            .then(modifier)
-                    )
-                    Text(
-                        text = "生成链接(需科学上网)", modifier = Modifier
-                            .clickable(onClick = {
-                                showShareLogDlg = false
-                                vm.viewModelScope.launchTry(Dispatchers.IO) {
-                                    val logZipFile = File(logZipDir, "log.zip")
-                                    ZipUtils.zipFiles(LogUtils.getLogFiles(), logZipFile)
-                                    vm.uploadZip(logZipFile)
-                                }
-                            })
-                            .then(modifier)
-                    )
-                }
+                val modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                Text(
+                    text = "调用系统分享", modifier = Modifier
+                        .clickable(onClick = {
+                            showShareLogDlg = false
+                            vm.viewModelScope.launchTry(Dispatchers.IO) {
+                                val logZipFile = File(logZipDir, "log.zip")
+                                ZipUtils.zipFiles(LogUtils.getLogFiles(), logZipFile)
+                                context.shareFile(logZipFile, "分享日志文件")
+                            }
+                        })
+                        .then(modifier)
+                )
+                Text(
+                    text = "生成链接(需科学上网)", modifier = Modifier
+                        .clickable(onClick = {
+                            showShareLogDlg = false
+                            vm.viewModelScope.launchTry(Dispatchers.IO) {
+                                val logZipFile = File(logZipDir, "log.zip")
+                                ZipUtils.zipFiles(LogUtils.getLogFiles(), logZipFile)
+                                vm.uploadZip(logZipFile)
+                            }
+                        })
+                        .then(modifier)
+                )
             }
         }
     }
@@ -325,15 +310,28 @@ fun useSettingsPage(): ScaffoldExt {
         else -> {}
     }
 
-    return ScaffoldExt(navItem = settingsNav) { padding ->
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val scrollState = rememberScrollState()
+    return ScaffoldExt(
+        navItem = settingsNav,
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        topBar = {
+            TopAppBar(scrollBehavior = scrollBehavior,
+                title = {
+                    Text(
+                        text = settingsNav.label,
+                    )
+                }
+            )
+        },
+    ) { padding ->
         Column(
             modifier = Modifier
+                .verticalScroll(scrollState)
                 .padding(padding)
-                .verticalScroll(
-                    state = rememberScrollState()
-                )
         ) {
-            TextSwitch(name = "后台隐藏",
+            TextSwitch(
+                name = "后台隐藏",
                 desc = "在[最近任务]界面中隐藏本应用",
                 checked = store.excludeFromRecents,
                 onCheckedChange = {

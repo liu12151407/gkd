@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import com.blankj.utilcode.util.LogUtils
+import com.hjq.toast.Toaster
 import com.tencent.mmkv.MMKV
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,7 @@ import li.songe.gkd.util.initStore
 import li.songe.gkd.util.initSubsState
 import li.songe.gkd.util.launchTry
 import org.lsposed.hiddenapibypass.HiddenApiBypass
+
 
 val appScope by lazy { MainScope() }
 
@@ -43,11 +45,12 @@ class App : Application() {
             LogUtils.d("UncaughtExceptionHandler", t, e)
             errorHandler?.uncaughtException(t, e)
         }
-
+        Toaster.init(this)
         MMKV.initialize(this)
         LogUtils.getConfig().apply {
             setConsoleSwitch(BuildConfig.DEBUG)
             saveDays = 7
+            isLog2FileSwitch = true
         }
         LogUtils.d(
             "GIT_COMMIT_URL: $GIT_COMMIT_URL",

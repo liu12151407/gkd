@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import li.songe.gkd.service.allowPropertyNames
+import li.songe.gkd.service.checkSelector
 import li.songe.gkd.util.json
 import li.songe.gkd.util.json5ToJson
 import li.songe.gkd.util.toast
@@ -57,7 +57,7 @@ data class RawSubscription(
         map
     }
 
-    val appGroups by lazy {
+    private val appGroups by lazy {
         apps.flatMap { a -> a.groups }
     }
 
@@ -159,7 +159,7 @@ data class RawSubscription(
     }
 
 
-    interface RawCommonProps {
+    sealed interface RawCommonProps {
         val actionCd: Long?
         val actionDelay: Long?
         val quickFind: Boolean?
@@ -170,11 +170,12 @@ data class RawSubscription(
         val actionCdKey: Int?
         val actionMaximumKey: Int?
         val order: Int?
+        val forcedTime: Long?
         val snapshotUrls: List<String>?
         val exampleUrls: List<String>?
     }
 
-    interface RawRuleProps : RawCommonProps {
+    sealed interface RawRuleProps : RawCommonProps {
         val name: String?
         val key: Int?
         val preKeys: List<Int>?
@@ -184,16 +185,21 @@ data class RawSubscription(
         val excludeMatches: List<String>?
     }
 
-    interface RawGroupProps : RawCommonProps {
+    @Immutable
+    sealed interface RawGroupProps : RawCommonProps {
         val name: String
         val key: Int
         val desc: String?
         val enable: Boolean?
         val scopeKeys: List<Int>?
         val rules: List<RawRuleProps>
+
+        val valid: Boolean
+        val errorDesc: String?
+        val allExampleUrls: List<String>
     }
 
-    interface RawAppRuleProps {
+    sealed interface RawAppRuleProps {
         val activityIds: List<String>?
         val excludeActivityIds: List<String>?
 
@@ -203,7 +209,7 @@ data class RawSubscription(
         val excludeVersionCodes: List<Long>?
     }
 
-    interface RawGlobalRuleProps {
+    sealed interface RawGlobalRuleProps {
         val matchAnyApp: Boolean?
         val matchSystemApp: Boolean?
         val matchLauncher: Boolean?
@@ -241,6 +247,7 @@ data class RawSubscription(
         override val actionCdKey: Int?,
         override val actionMaximumKey: Int?,
         override val order: Int?,
+        override val forcedTime: Long?,
         override val snapshotUrls: List<String>?,
         override val exampleUrls: List<String>?,
         override val matchAnyApp: Boolean?,
@@ -254,38 +261,11 @@ data class RawSubscription(
             (apps ?: emptyList()).associate { a -> a.id to (a.enable ?: true) }
         }
 
-        val allSelectorStrings by lazy {
-            rules.map { r -> r.matches + (r.excludeMatches ?: emptyList()) }.flatten()
+        override val errorDesc by lazy { getErrorDesc() }
 
-        }
+        override val valid by lazy { errorDesc == null }
 
-        val allSelector by lazy {
-            allSelectorStrings.map { s -> Selector.parseOrNull(s) }
-        }
-
-        val unknownPropertyNames by lazy {
-            allSelector.filterNotNull().flatMap { r -> r.propertyNames.toList() }.distinct()
-                .filterNot { n -> allowPropertyNames.contains(n) }
-        }
-
-        val errorDesc by lazy {
-            allSelector.forEachIndexed { i, s ->
-                if (s == null) {
-                    return@lazy "非法选择器:${allSelectorStrings[i]}"
-                }
-            }
-            unknownPropertyNames.forEach { n ->
-                return@lazy "非法属性名:${n}"
-            }
-            if (rules.any { r -> r.position?.isValid == false }) {
-                return@lazy "非法位置"
-            }
-            null
-        }
-
-        val valid by lazy { errorDesc == null }
-
-        val allExampleUrls by lazy {
+        override val allExampleUrls by lazy {
             ((exampleUrls ?: emptyList()) + rules.flatMap { r ->
                 r.exampleUrls ?: emptyList()
             }).distinct()
@@ -305,6 +285,7 @@ data class RawSubscription(
         override val actionCdKey: Int?,
         override val actionMaximumKey: Int?,
         override val order: Int?,
+        override val forcedTime: Long?,
         override val snapshotUrls: List<String>?,
         override val exampleUrls: List<String>?,
         override val name: String?,
@@ -335,6 +316,7 @@ data class RawSubscription(
         override val quickFind: Boolean?,
         override val actionMaximum: Int?,
         override val order: Int?,
+        override val forcedTime: Long?,
         override val matchDelay: Long?,
         override val matchTime: Long?,
         override val resetMatch: String?,
@@ -349,35 +331,11 @@ data class RawSubscription(
         override val excludeVersionCodes: List<Long>?,
     ) : RawGroupProps, RawAppRuleProps {
 
-        val allSelectorStrings by lazy {
-            rules.map { r -> (r.matches ?: emptyList()) + (r.excludeMatches ?: emptyList()) }
-                .flatten()
-        }
+        override val errorDesc by lazy { getErrorDesc() }
 
-        val allSelector by lazy {
-            allSelectorStrings.map { s -> Selector.parseOrNull(s) }
-        }
+        override val valid by lazy { errorDesc == null }
 
-        val unknownPropertyNames by lazy {
-            allSelector.filterNotNull().flatMap { r -> r.propertyNames.toList() }.distinct()
-                .filterNot { n -> allowPropertyNames.contains(n) }
-        }
-
-        val errorDesc by lazy {
-            allSelector.forEachIndexed { i, s ->
-                if (s == null) {
-                    return@lazy "非法选择器:${allSelectorStrings[i]}"
-                }
-            }
-            unknownPropertyNames.forEach { n ->
-                return@lazy "非法属性名:${n}"
-            }
-            null
-        }
-
-        val valid by lazy { errorDesc == null }
-
-        val allExampleUrls by lazy {
+        override val allExampleUrls by lazy {
             ((exampleUrls ?: emptyList()) + rules.flatMap { r ->
                 r.exampleUrls ?: emptyList()
             }).distinct()
@@ -402,6 +360,7 @@ data class RawSubscription(
         override val quickFind: Boolean?,
         override val actionMaximum: Int?,
         override val order: Int?,
+        override val forcedTime: Long?,
         override val matchDelay: Long?,
         override val matchTime: Long?,
         override val resetMatch: String?,
@@ -418,6 +377,29 @@ data class RawSubscription(
     ) : RawRuleProps, RawAppRuleProps
 
     companion object {
+
+        private fun RawGroupProps.getErrorDesc(): String? {
+            val allSelectorStrings =
+                rules.map { r -> (r.matches ?: emptyList()) + (r.excludeMatches ?: emptyList()) }
+                    .flatten()
+
+            val allSelector = allSelectorStrings.map { s -> Selector.parseOrNull(s) }
+
+            allSelector.forEachIndexed { i, s ->
+                if (s == null) {
+                    return "非法选择器:${allSelectorStrings[i]}"
+                }
+            }
+            allSelector.forEach { s ->
+                s?.checkSelector()?.let { return it }
+            }
+            rules.forEach { r ->
+                if (r.position?.isValid == false) {
+                    return "非法位置:${r.position}"
+                }
+            }
+            return null
+        }
 
         private val expVars = arrayOf(
             "left",
@@ -601,6 +583,7 @@ data class RawSubscription(
                 versionNames = getStringIArray(jsonObject, "versionNames"),
                 excludeVersionNames = getStringIArray(jsonObject, "excludeVersionNames"),
                 position = getPosition(jsonObject),
+                forcedTime = getLong(jsonObject, "forcedTime"),
             )
         }
 
@@ -637,6 +620,7 @@ data class RawSubscription(
                 actionMaximumKey = getInt(jsonObject, "actionMaximumKey"),
                 actionCdKey = getInt(jsonObject, "actionCdKey"),
                 order = getInt(jsonObject, "order"),
+                forcedTime = getLong(jsonObject, "forcedTime"),
                 scopeKeys = getIntIArray(jsonObject, "scopeKeys"),
                 versionCodes = getLongIArray(jsonObject, "versionCodes"),
                 excludeVersionCodes = getLongIArray(jsonObject, "excludeVersionCodes"),
@@ -701,6 +685,7 @@ data class RawSubscription(
                 excludeMatches = getStringIArray(jsonObject, "excludeMatches"),
                 matches = getStringIArray(jsonObject, "matches") ?: error("miss matches"),
                 order = getInt(jsonObject, "order"),
+                forcedTime = getLong(jsonObject, "forcedTime"),
                 position = getPosition(jsonObject),
             )
         }
@@ -736,6 +721,7 @@ data class RawSubscription(
                 } ?: emptyList(),
                 order = getInt(jsonObject, "order"),
                 scopeKeys = getIntIArray(jsonObject, "scopeKeys"),
+                forcedTime = getLong(jsonObject, "forcedTime"),
             )
         }
 

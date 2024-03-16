@@ -1,7 +1,6 @@
 package li.songe.gkd.ui.home
 
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,18 +21,20 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import li.songe.gkd.MainActivity
-import li.songe.gkd.appScope
 import li.songe.gkd.service.GkdAbService
 import li.songe.gkd.service.ManageService
 import li.songe.gkd.ui.component.AuthCard
@@ -43,10 +44,11 @@ import li.songe.gkd.ui.destinations.SlowGroupPageDestination
 import li.songe.gkd.util.HOME_PAGE_URL
 import li.songe.gkd.util.LocalNavController
 import li.songe.gkd.util.checkOrRequestNotifPermission
-import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.navigate
+import li.songe.gkd.util.openUri
 import li.songe.gkd.util.ruleSummaryFlow
 import li.songe.gkd.util.storeFlow
+import li.songe.gkd.util.tryStartActivity
 import li.songe.gkd.util.usePollState
 
 val controlNav = BottomNavItem(label = "主页", icon = Icons.Outlined.Home)
@@ -67,32 +69,31 @@ fun useControlPage(): ScaffoldExt {
     val canNotif by usePollState {
         NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
-
-    return ScaffoldExt(navItem = controlNav, topBar = {
-        TopAppBar(title = {
-            Text(
-                text = controlNav.label,
-            )
-        })
-    }, content = { padding ->
+    val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    val scrollState = rememberScrollState()
+    return ScaffoldExt(navItem = controlNav,
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        topBar = {
+            TopAppBar(scrollBehavior = scrollBehavior, title = {
+                Text(
+                    text = controlNav.label,
+                )
+            })
+        }
+    ) { padding ->
         Column(
             modifier = Modifier
+                .verticalScroll(scrollState)
                 .padding(padding)
-                .verticalScroll(
-                    state = rememberScrollState()
-                )
         ) {
             if (!gkdAccessRunning) {
                 AuthCard(
                     title = "无障碍权限",
                     desc = "用于获取屏幕信息,点击屏幕上的控件",
                     onAuthClick = {
-                        appScope.launchTry {
-                            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            // android.content.ActivityNotFoundException
-                            context.startActivity(intent)
-                        }
+                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        context.tryStartActivity(intent)
                     })
             } else {
                 TextSwitch(
@@ -121,20 +122,18 @@ fun useControlPage(): ScaffoldExt {
                     title = "悬浮窗权限",
                     desc = "用于后台提示,显示保存快照按钮等功能",
                     onAuthClick = {
-                        appScope.launchTry {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            )
-                            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                            context.startActivity(intent)
-                        }
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        )
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        context.tryStartActivity(intent)
                     })
                 HorizontalDivider()
             }
 
             TextSwitch(
                 name = "常驻通知",
-                desc = "在通知栏显示服务运行状态及统计数据",
+                desc = "通知栏显示运行状态及统计数据",
                 checked = manageRunning && store.enableStatusService,
                 onCheckedChange = {
                     if (it) {
@@ -159,13 +158,7 @@ fun useControlPage(): ScaffoldExt {
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clickable {
-                        appScope.launchTry {
-                            context.startActivity(
-                                Intent(
-                                    Intent.ACTION_VIEW, Uri.parse(HOME_PAGE_URL)
-                                )
-                            )
-                        }
+                        context.openUri(HOME_PAGE_URL)
                     }
                     .padding(10.dp, 5.dp),
             ) {
@@ -248,11 +241,16 @@ fun useControlPage(): ScaffoldExt {
                 Text(text = subsStatus, fontSize = 18.sp)
                 if (latestRecordDesc != null) {
                     Text(
-                        text = "最近点击: $latestRecordDesc", fontSize = 14.sp
+                        text = "最近点击: $latestRecordDesc",
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
+            Spacer(modifier = Modifier.height(40.dp))
         }
-    })
+    }
 }

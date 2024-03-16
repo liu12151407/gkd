@@ -14,11 +14,6 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-
-//    https://youtrack.jetbrains.com/issue/KT-55620
-//    https://stackoverflow.com/questions/69163511
-//    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
-
     repositories {
         mavenLocal()
         mavenCentral()
@@ -66,8 +61,8 @@ dependencyResolutionManagement {
 
             // compose 编译器的版本, 需要注意它与 compose 的版本没有关联
             // https://developer.android.com/jetpack/androidx/releases/compose-compiler
-            version("compose.compilerVersion", "1.5.9")
-            val composeVersion = "1.6.1"
+            version("compose.compilerVersion", "1.5.10")
+            val composeVersion = "1.6.3"
             library("compose.ui", "androidx.compose.ui:ui:$composeVersion")
             library("compose.preview", "androidx.compose.ui:ui-tooling-preview:$composeVersion")
             library("compose.tooling", "androidx.compose.ui:ui-tooling:$composeVersion")
@@ -78,7 +73,7 @@ dependencyResolutionManagement {
                 "compose.icons",
                 "androidx.compose.material:material-icons-extended:$composeVersion"
             )
-            library("compose.material3", "androidx.compose.material3:material3:1.2.0")
+            library("compose.material3", "androidx.compose.material3:material3:1.2.1")
             library("compose.activity", "androidx.activity:activity-compose:1.8.2")
 
             // https://github.com/Tencent/MMKV/blob/master/README_CN.md
@@ -128,8 +123,13 @@ dependencyResolutionManagement {
             library("androidx.room.runtime", "androidx.room:room-runtime:$roomVersion")
             library("androidx.room.compiler", "androidx.room:room-compiler:$roomVersion")
             library("androidx.room.ktx", "androidx.room:room-ktx:$roomVersion")
+            library("androidx.room.paging", "androidx.room:room-paging:$roomVersion")
 
             library("androidx.splashscreen", "androidx.core:core-splashscreen:1.0.1")
+
+            val pagingVersion = "3.2.1"
+            library("androidx.paging.runtime", "androidx.paging:paging-runtime:$pagingVersion")
+            library("androidx.paging.compose", "androidx.paging:paging-compose:$pagingVersion")
 
             library(
                 "google.accompanist.drawablepainter",
@@ -138,8 +138,7 @@ dependencyResolutionManagement {
 
             library("junit", "junit:junit:4.13.2")
 
-            val ktorVersion = "2.3.8"
-            // 请注意,当 client 和 server 版本不一致时, 会报错 socket hang up
+            val ktorVersion = "2.3.9"
             library("ktor.server.core", "io.ktor:ktor-server-core:$ktorVersion")
             library("ktor.server.cio", "io.ktor:ktor-server-cio:$ktorVersion")
             library("ktor.server.cors", "io.ktor:ktor-server-cors:$ktorVersion")
@@ -161,7 +160,7 @@ dependencyResolutionManagement {
 
             library(
                 "kotlinx.serialization.json",
-                "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2"
+                "org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3"
             )
 
             // https://github.com/Kotlin/kotlinx.collections.immutable
@@ -171,12 +170,9 @@ dependencyResolutionManagement {
                 "org.jetbrains.kotlinx:kotlinx-collections-immutable:0.3.7"
             )
 
-//            https://developer.android.com/reference/kotlin/org/json/package-summary
-            library("org.json", "org.json:json:20210307")
-
             plugin("google.ksp", "com.google.devtools.ksp").version("1.9.22-1.0.17")
 
-            val hiltVersion = "2.50"
+            val hiltVersion = "2.51"
             plugin("google.hilt", "com.google.dagger.hilt.android").version(hiltVersion)
             library("google.hilt.android", "com.google.dagger:hilt-android:$hiltVersion")
             library(
@@ -184,11 +180,11 @@ dependencyResolutionManagement {
                 "com.google.dagger:hilt-android-compiler:$hiltVersion"
             )
             library(
-                "androidx.hilt.navigation.compose", "androidx.hilt:hilt-navigation-compose:1.1.0"
+                "androidx.hilt.navigation.compose", "androidx.hilt:hilt-navigation-compose:1.2.0"
             )
 
 //            https://github.com/raamcosta/compose-destinations
-            val destinationsVersion = "1.10.0"
+            val destinationsVersion = "1.10.1"
             library(
                 "destinations.core",
                 "io.github.raamcosta.compose-destinations:core:$destinationsVersion"
@@ -203,10 +199,12 @@ dependencyResolutionManagement {
             library("coil.gif", "io.coil-kt:coil-gif:$coilVersion")
 
             // https://github.com/Calvin-LL/Reorderable
-            library("others.reorderable", "sh.calvin.reorderable:reorderable:1.3.1")
+            library("others.reorderable", "sh.calvin.reorderable:reorderable:1.3.2")
 
             // https://www.objecthunter.net/exp4j/
             library("exp4j", "net.objecthunter:exp4j:0.4.8")
+
+            library("toaster", "com.github.getActivity:Toaster:12.6")
         }
     }
 }

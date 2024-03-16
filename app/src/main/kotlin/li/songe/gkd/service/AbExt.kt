@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import li.songe.selector.Selector
 import li.songe.selector.Transform
+import li.songe.selector.data.PrimitiveValue
 
 val AccessibilityService.safeActiveWindow: AccessibilityNodeInfo?
     get() = try {
@@ -56,14 +57,27 @@ fun AccessibilityNodeInfo.getDepth(): Int {
     return depth
 }
 
+fun AccessibilityNodeInfo.getVid(): CharSequence? {
+    val id = viewIdResourceName ?: return null
+    val appId = packageName ?: return null
+    if (id.startsWith(appId) && id.startsWith(":id/", appId.length)) {
+        return id.subSequence(
+            appId.length + ":id/".length,
+            id.length
+        )
+    }
+    return null
+}
+
 fun AccessibilityNodeInfo.querySelector(
     selector: Selector,
     quickFind: Boolean = false,
+    transform: Transform<AccessibilityNodeInfo>? = null,
 ): AccessibilityNodeInfo? {
+    val t = (if (selector.canCacheIndex) transform else defaultTransform) ?: defaultTransform
     if (selector.isMatchRoot) {
         if (parent == null) {
-            val trackNodes = mutableListOf<AccessibilityNodeInfo>()
-            return selector.match(this, abTransform, trackNodes)
+            return selector.match(this, t)
         }
         return null
     }
@@ -81,16 +95,16 @@ fun AccessibilityNodeInfo.querySelector(
             emptyList()
         })
         if (nodes.isNotEmpty()) {
-            val trackNodes = mutableListOf<AccessibilityNodeInfo>()
+            val trackNodes = ArrayList<AccessibilityNodeInfo>(selector.tracks.size)
             nodes.forEach { childNode ->
-                val targetNode = selector.match(childNode, abTransform, trackNodes)
+                val targetNode = selector.match(childNode, t, trackNodes)
                 if (targetNode != null) return targetNode
             }
         }
         return null
     }
     // 在一些开屏广告的界面会造成1-2s的阻塞
-    return abTransform.querySelector(this, selector)
+    return t.querySelector(this, selector)
 }
 
 // 不可以在 多线程/不同协程作用域 里同时使用
@@ -115,50 +129,54 @@ val getChildren: (AccessibilityNodeInfo) -> Sequence<AccessibilityNodeInfo> = { 
     }
 }
 
-val allowPropertyNames = setOf(
-    "id",
-    "vid",
+val allowPropertyNames by lazy {
+    mapOf(
+        "id" to PrimitiveValue.StringValue.TYPE_NAME,
+        "vid" to PrimitiveValue.StringValue.TYPE_NAME,
 
-    "name",
-    "text",
-    "text.length",
-    "desc",
-    "desc.length",
+        "name" to PrimitiveValue.StringValue.TYPE_NAME,
+        "text" to PrimitiveValue.StringValue.TYPE_NAME,
+        "text.length" to PrimitiveValue.IntValue.TYPE_NAME,
+        "desc" to PrimitiveValue.StringValue.TYPE_NAME,
+        "desc.length" to PrimitiveValue.IntValue.TYPE_NAME,
 
-    "clickable",
-    "focusable",
-    "checkable",
-    "checked",
-    "editable",
-    "longClickable",
-    "visibleToUser",
+        "clickable" to PrimitiveValue.BooleanValue.TYPE_NAME,
+        "focusable" to PrimitiveValue.BooleanValue.TYPE_NAME,
+        "checkable" to PrimitiveValue.BooleanValue.TYPE_NAME,
+        "checked" to PrimitiveValue.BooleanValue.TYPE_NAME,
+        "editable" to PrimitiveValue.BooleanValue.TYPE_NAME,
+        "longClickable" to PrimitiveValue.BooleanValue.TYPE_NAME,
+        "visibleToUser" to PrimitiveValue.BooleanValue.TYPE_NAME,
 
-    "left",
-    "top",
-    "right",
-    "bottom",
-    "width",
-    "height",
+        "left" to PrimitiveValue.IntValue.TYPE_NAME,
+        "top" to PrimitiveValue.IntValue.TYPE_NAME,
+        "right" to PrimitiveValue.IntValue.TYPE_NAME,
+        "bottom" to PrimitiveValue.IntValue.TYPE_NAME,
+        "width" to PrimitiveValue.IntValue.TYPE_NAME,
+        "height" to PrimitiveValue.IntValue.TYPE_NAME,
 
-    "index",
-    "depth",
-    "childCount"
-)
+        "index" to PrimitiveValue.IntValue.TYPE_NAME,
+        "depth" to PrimitiveValue.IntValue.TYPE_NAME,
+        "childCount" to PrimitiveValue.IntValue.TYPE_NAME,
+    )
+}
+
+fun Selector.checkSelector(): String? {
+    nameToTypeList.forEach { (name, type) ->
+        if (!allowPropertyNames.contains(name)) {
+            return "未知属性:${name}"
+        }
+        if (type != "null" && allowPropertyNames[name] != type) {
+            return "非法类型:${name}=$type"
+        }
+    }
+    return null
+}
 
 private val getAttr: (AccessibilityNodeInfo, String) -> Any? = { node, name ->
     when (name) {
         "id" -> node.viewIdResourceName
-        "vid" -> node.viewIdResourceName?.let { id ->
-            val appId = node.packageName
-            if (appId != null && id.startsWith(appId) && id.startsWith(":id/", appId.length)) {
-                id.subSequence(
-                    appId.length + ":id/".length,
-                    id.length
-                )
-            } else {
-                null
-            }
-        }
+        "vid" -> node.getVid()
 
         "name" -> node.className
         "text" -> node.text
@@ -189,11 +207,196 @@ private val getAttr: (AccessibilityNodeInfo, String) -> Any? = { node, name ->
     }
 }
 
-val abTransform = Transform(
+data class CacheTransform(
+    val transform: Transform<AccessibilityNodeInfo>,
+    val indexCache: HashMap<AccessibilityNodeInfo, Int>,
+)
+
+fun createCacheTransform(): CacheTransform {
+    val indexCache = HashMap<AccessibilityNodeInfo, Int>()
+    fun AccessibilityNodeInfo.getChildX(index: Int): AccessibilityNodeInfo? {
+        return getChild(index)?.also { child ->
+            indexCache[child] = index
+        }
+    }
+
+    fun AccessibilityNodeInfo.getIndexX(): Int {
+        indexCache[this]?.let { return it }
+        parent?.forEachIndexed { index, child ->
+            if (child != null) {
+                indexCache[child] = index
+            }
+            if (child == this) {
+                return index
+            }
+        }
+        return 0
+    }
+
+    val getChildrenCache: (AccessibilityNodeInfo) -> Sequence<AccessibilityNodeInfo> = { node ->
+        sequence {
+            repeat(node.childCount.coerceAtMost(MAX_CHILD_SIZE)) { index ->
+                val child = node.getChildX(index) ?: return@sequence
+                yield(child)
+            }
+        }
+    }
+    val transform = Transform(
+        getAttr = { node, name ->
+            if (name == "index") {
+                node.getIndexX()
+            } else {
+                getAttr(node, name)
+            }
+        },
+        getName = { node -> node.className },
+        getChildren = getChildrenCache,
+        getParent = { node -> node.parent },
+        getDescendants = { node ->
+            sequence {
+                val stack = getChildrenCache(node).toMutableList()
+                if (stack.isEmpty()) return@sequence
+                stack.reverse()
+                val tempNodes = mutableListOf<AccessibilityNodeInfo>()
+                do {
+                    val top = stack.removeLast()
+                    yield(top)
+                    for (childNode in getChildrenCache(top)) {
+                        tempNodes.add(childNode)
+                    }
+                    if (tempNodes.isNotEmpty()) {
+                        for (i in tempNodes.size - 1 downTo 0) {
+                            stack.add(tempNodes[i])
+                        }
+                        tempNodes.clear()
+                    }
+                } while (stack.isNotEmpty())
+            }.take(MAX_DESCENDANTS_SIZE)
+        },
+        getChildrenX = { node, connectExpression ->
+            sequence {
+                repeat(node.childCount.coerceAtMost(MAX_CHILD_SIZE)) { offset ->
+                    connectExpression.maxOffset?.let { maxOffset ->
+                        if (offset > maxOffset) return@sequence
+                    }
+                    if (connectExpression.checkOffset(offset)) {
+                        val child = node.getChildX(offset) ?: return@sequence
+                        yield(child)
+                    }
+                }
+            }
+        },
+        getBeforeBrothers = { node, connectExpression ->
+            sequence {
+                val parentVal = node.parent ?: return@sequence
+                val index =
+                    indexCache[node] // 如果 node 由 quickFind 得到, 则第一次调用此方法可能得到 indexCache 是空
+                if (index != null) {
+                    var i = index - 1
+                    var offset = 0
+                    while (0 <= i && i < parentVal.childCount) {
+                        connectExpression.maxOffset?.let { maxOffset ->
+                            if (offset > maxOffset) return@sequence
+                        }
+                        if (connectExpression.checkOffset(offset)) {
+                            val child = parentVal.getChild(i) ?: return@sequence
+                            yield(child)
+                        }
+                        i--
+                        offset++
+                    }
+                } else {
+                    val list =
+                        getChildrenCache(parentVal).takeWhile { it != node }.toMutableList()
+                    list.reverse()
+                    yieldAll(list.filterIndexed { i, _ ->
+                        connectExpression.checkOffset(
+                            i
+                        )
+                    })
+                }
+            }
+        },
+        getAfterBrothers = { node, connectExpression ->
+            val parentVal = node.parent
+            if (parentVal != null) {
+                val index = indexCache[node]
+                if (index != null) {
+                    sequence {
+                        var i = index + 1
+                        var offset = 0
+                        while (0 <= i && i < parentVal.childCount) {
+                            connectExpression.maxOffset?.let { maxOffset ->
+                                if (offset > maxOffset) return@sequence
+                            }
+                            if (connectExpression.checkOffset(offset)) {
+                                val child = parentVal.getChild(i) ?: return@sequence
+                                yield(child)
+                            }
+                            i--
+                            offset++
+                        }
+                    }
+                } else {
+                    getChildrenCache(parentVal).dropWhile { it != node }
+                        .drop(1)
+                        .let {
+                            if (connectExpression.maxOffset != null) {
+                                it.take(connectExpression.maxOffset!! + 1)
+                            } else {
+                                it
+                            }
+                        }
+                        .filterIndexed { i, _ ->
+                            connectExpression.checkOffset(
+                                i
+                            )
+                        }
+                }
+            } else {
+                emptySequence()
+            }
+        },
+        getDescendantsX = { node, connectExpression ->
+            sequence {
+                val stack = getChildrenCache(node).toMutableList()
+                if (stack.isEmpty()) return@sequence
+                stack.reverse()
+                val tempNodes = mutableListOf<AccessibilityNodeInfo>()
+                var offset = 0
+                do {
+                    val top = stack.removeLast()
+                    if (connectExpression.checkOffset(offset)) {
+                        yield(top)
+                    }
+                    offset++
+                    connectExpression.maxOffset?.let { maxOffset ->
+                        if (offset > maxOffset) return@sequence
+                    }
+                    for (childNode in getChildrenCache(top)) {
+                        tempNodes.add(childNode)
+                    }
+                    if (tempNodes.isNotEmpty()) {
+                        for (i in tempNodes.size - 1 downTo 0) {
+                            stack.add(tempNodes[i])
+                        }
+                        tempNodes.clear()
+                    }
+                } while (stack.isNotEmpty())
+            }
+        },
+    )
+
+    return CacheTransform(transform, indexCache)
+}
+
+val defaultCacheTransform = createCacheTransform()
+
+// no cache
+val defaultTransform = Transform(
     getAttr = getAttr,
     getName = { node -> node.className },
     getChildren = getChildren,
-    getChild = { node, index -> if (index in 0..<node.childCount) node.getChild(index) else null },
     getParent = { node -> node.parent },
     getDescendants = { node ->
         sequence {
@@ -201,9 +404,14 @@ val abTransform = Transform(
             if (stack.isEmpty()) return@sequence
             stack.reverse()
             val tempNodes = mutableListOf<AccessibilityNodeInfo>()
+            var offset = 0
             do {
                 val top = stack.removeLast()
                 yield(top)
+                offset++
+                if (offset > MAX_DESCENDANTS_SIZE) {
+                    return@sequence
+                }
                 for (childNode in getChildren(top)) {
                     tempNodes.add(childNode)
                 }
@@ -214,6 +422,19 @@ val abTransform = Transform(
                     tempNodes.clear()
                 }
             } while (stack.isNotEmpty())
-        }.take(MAX_DESCENDANTS_SIZE)
-    }
+        }
+    },
+    getChildrenX = { node, connectExpression ->
+        sequence {
+            repeat(node.childCount.coerceAtMost(MAX_CHILD_SIZE)) { offset ->
+                connectExpression.maxOffset?.let { maxOffset ->
+                    if (offset > maxOffset) return@sequence
+                }
+                if (connectExpression.checkOffset(offset)) {
+                    val child = node.getChild(offset) ?: return@sequence
+                    yield(child)
+                }
+            }
+        }
+    },
 )
